@@ -1,0 +1,145 @@
+name: Loharji-Master-Classic-Service
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  maintenance:
+    runs-on: windows-latest
+    timeout-minutes: 360 # Pure 6 ghante ka session
+    steps:
+      - name: 1. Instant Desktop Cleanup & Power Fix
+        shell: powershell
+        run: |
+          Write-Host "Erasering GitHub Traces and Setting Power Policy..."
+          # Windows ko kabhi na sone dena (Stay Awake Force)
+          powercfg /x -hibernate-timeout-ac 0
+          powercfg /x -standby-timeout-ac 0
+          powercfg /x -monitor-timeout-ac 0
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+         
+          # Desktop Cleanup (Unity, Firefox, Edge, R-Studio sab saaf)
+          $trash = @(
+            "C:\Users\Public\Desktop\Unity Hub.lnk",
+            "C:\Users\Public\Desktop\Epic Games Launcher.lnk",
+            "C:\Users\Public\Desktop\Microsoft Edge.lnk",
+            "C:\Users\Public\Desktop\Firefox.lnk",
+            "C:\Users\Public\Desktop\R 4.5.3.lnk",
+            "C:\Users\Public\Desktop\RStudio.lnk"
+          )
+          foreach ($f in $trash) { if (Test-Path $f) { Remove-Item $f -Force } }
+         
+          # Refresh Desktop
+          taskkill /f /im explorer.exe
+          start explorer.exe
+          Write-Host "Cleanup Completed."
+
+      - name: 2. Stealth Setup, Branding & Cloudflare Sync
+        shell: python
+        env:
+          RID: ${{ github.run_id }}
+          REP: ${{ github.repository }}
+        run: |
+          import os, subprocess, time, urllib.request, urllib.parse, base64, random, string
+
+          h = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0'}
+          logo_url = "https://drive.google.com/uc?export=download&id=1uwA0kql5hW1NldSkNLaXxZtQVVVW43Mb"
+          # APKA CLOUDFLARE WORKER LINK
+          worker_url = "https://sparkling-rice-8ce9.dipu2333001.workers.dev/"
+          any_d_url = base64.b64decode("aHR0cHM6Ly9kb3dubG9hZC5hbnlkZXNrLmNvbS9BbnlEZXNrLmV4ZQ==").decode()
+          p_pass = "Loharji1231223"
+         
+          # Folder and PC Randomization
+          tag = ''.join(random.choices(string.ascii_lowercase, k=6))
+          sys_folder = f"C:\\Windows\\SysData_{tag}"
+          pc_name = "WORKSTATION-" + str(random.randint(1000, 9999))
+          os.system(f'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\ComputerName\\ComputerName" /v "ComputerName" /t REG_SZ /d "{pc_name}" /f')
+
+          # BRANDING: Wallpaper & Profile Picture
+          img_p = r"C:\Windows\brand.jpg"
+          try:
+              urllib.request.urlretrieve(logo_url, img_p)
+              os.system(f'reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "{img_p}" /f')
+              os.system(r'reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f')
+              pic_paths = [r"C:\ProgramData\Microsoft\User Account Pictures\user.png", r"C:\ProgramData\Microsoft\User Account Pictures\user-192.png"]
+              for p in pic_paths: os.system(f'copy /y "{img_p}" "{p}"')
+              # Refresh Wallpaper
+              ref_sh = "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class W { [DllImport(\"user32.dll\")] public static extern int SystemParametersInfo(int u, int p, string v, int f); }'; [W]::SystemParametersInfo(20, 0, '" + img_p + "', 3)"
+              subprocess.run(["powershell", "-Command", ref_sh])
+          except: pass
+
+          # ANYDESK INSTALL
+          req = urllib.request.Request(any_d_url, headers=h)
+          with urllib.request.urlopen(req) as res, open("helper.exe", 'wb') as f: f.write(res.read())
+          os.system(f'.\\helper.exe --install {sys_folder} --start-with-win --silent')
+          time.sleep(12)
+          os.system(r'reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\AnyDesk" /v "ShowWallpaper" /t REG_DWORD /d 1 /f')
+          exe = f"{sys_folder}\\AnyDesk.exe"
+          os.system(f'echo {p_pass} | "{exe}" --set-password')
+
+          # CLOUDFLARE SYNC
+          for i in range(12):
+              aid = subprocess.getoutput(f'"{exe}" --get-id').strip()
+              if aid.isdigit():
+                  noise = ''.join(random.choices(string.ascii_letters, k=15))
+                  params = urllib.parse.urlencode({'id': aid, 'pw': p_pass, 'run_id': os.environ['RID'], 'repo': os.environ['REP'], 'token': noise})
+                  urllib.request.urlopen(urllib.request.Request(f"{worker_url}?{params}", headers=h))
+                  print(f"System Established: {aid}")
+                  break
+              time.sleep(5)
+
+      - name: 3. Pro Drivers & Smoothness Patch
+        continue-on-error: true
+        shell: powershell
+        run: |
+          Write-Host "Applying Legacy Smoothness logic..."
+          # Visual Effects to Performance
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v "VisualFXSetting" /t REG_DWORD /d 2 /f
+         
+          # Drivers & Apps
+          choco install googlechrome vcredist-all --no-progress -y --ignore-checksums --force
+         
+          # VMQuickConfig (Pop-up Fix)
+          Invoke-WebRequest 'https://github.com/chieunhatnang/VM-QuickConfig/releases/download/1.6.1/VMQuickConfig.exe' -OutFile 'C:\Windows\Turbo.exe'
+          Start-Process -FilePath "C:\Windows\Turbo.exe" -ArgumentList "/silent" -WindowStyle Hidden
+          Start-Sleep -Seconds 15
+          Get-Process -Name "VMQuickConfig" -ErrorAction SilentlyContinue | Stop-Process -Force
+         
+          # Shortcut Branding
+          $ws = New-Object -ComObject WScript.Shell
+          $s = $ws.CreateShortcut("C:\Users\Public\Desktop\Support.lnk")
+          $s.TargetPath = "https://jangipur.in"; $s.Save()
+
+      - name: 4. Ghost Mode - Virtual Terminal Hider
+        shell: powershell
+        run: |
+          # Moving all terminals to invisible zone
+          $code = @'
+          using System;
+          using System.Runtime.InteropServices;
+          public class Ghost {
+              [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+              [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int x, int y, int cx, int cy, int uFlags);
+          }
+          '@
+          Add-Type -TypeDefinition $code
+          Get-Process | Where-Object { $_.ProcessName -match "Runner.Listener|cmd|conhost" } | ForEach-Object {
+              $h = $_.MainWindowHandle
+              if ($h -ne 0) { [Ghost]::ShowWindow($h, 0); [Ghost]::SetWindowPos($h, 0, -20000, -20000, 0, 0, 0x0080) }
+          }
+
+      - name: 5. Classic Reliable Heartbeat Loop (6 Hours)
+        shell: powershell
+        run: |
+          Write-Host "System is now Butter Smooth. Classic loop starting..."
+          # Ye wahi purana loop hai jo reconnection mein help karta hai
+          while($true){
+              # Every loop AnyDesk priority check (Prevent hang)
+              Get-Process -Name "AnyDesk" -ErrorAction SilentlyContinue | ForEach-Object { try { $_.PriorityClass = 'High' } catch {} }
+             
+              Write-Host "Loharji RDP Active - $(Get-Date)"
+              Start-Sleep -Seconds 60
+          }
