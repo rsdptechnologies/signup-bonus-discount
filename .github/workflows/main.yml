@@ -1,145 +1,160 @@
-name: Loharji-Master-Classic-Service
+name: Windows RDP (Bore - IP Pinning + Auto Fix)
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
+env:
+  RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
 jobs:
-  maintenance:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 360 # Pure 6 ghante ka session
+    timeout-minutes: 360
     steps:
-      - name: 1. Instant Desktop Cleanup & Power Fix
-        shell: powershell
-        run: |
-          Write-Host "Erasering GitHub Traces and Setting Power Policy..."
-          # Windows ko kabhi na sone dena (Stay Awake Force)
-          powercfg /x -hibernate-timeout-ac 0
-          powercfg /x -standby-timeout-ac 0
-          powercfg /x -monitor-timeout-ac 0
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-         
-          # Desktop Cleanup (Unity, Firefox, Edge, R-Studio sab saaf)
-          $trash = @(
-            "C:\Users\Public\Desktop\Unity Hub.lnk",
-            "C:\Users\Public\Desktop\Epic Games Launcher.lnk",
-            "C:\Users\Public\Desktop\Microsoft Edge.lnk",
-            "C:\Users\Public\Desktop\Firefox.lnk",
-            "C:\Users\Public\Desktop\R 4.5.3.lnk",
-            "C:\Users\Public\Desktop\RStudio.lnk"
-          )
-          foreach ($f in $trash) { if (Test-Path $f) { Remove-Item $f -Force } }
-         
-          # Refresh Desktop
-          taskkill /f /im explorer.exe
-          start explorer.exe
-          Write-Host "Cleanup Completed."
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: 2. Stealth Setup, Branding & Cloudflare Sync
-        shell: python
-        env:
-          RID: ${{ github.run_id }}
-          REP: ${{ github.repository }}
-        run: |
-          import os, subprocess, time, urllib.request, urllib.parse, base64, random, string
+    - name: Setup RDP + Users
+      shell: powershell
+      run: |
+        $pass = $env:RDP_PASSWORD
+        if ([string]::IsNullOrWhiteSpace($pass)) { $pass = "Root@123456" }
 
-          h = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0'}
-          logo_url = "https://drive.google.com/uc?export=download&id=1uwA0kql5hW1NldSkNLaXxZtQVVVW43Mb"
-          # APKA CLOUDFLARE WORKER LINK
-          worker_url = "https://sparkling-rice-8ce9.dipu2333001.workers.dev/"
-          any_d_url = base64.b64decode("aHR0cHM6Ly9kb3dubG9hZC5hbnlkZXNrLmNvbS9BbnlEZXNrLmV4ZQ==").decode()
-          p_pass = "Loharji1231223"
-         
-          # Folder and PC Randomization
-          tag = ''.join(random.choices(string.ascii_lowercase, k=6))
-          sys_folder = f"C:\\Windows\\SysData_{tag}"
-          pc_name = "WORKSTATION-" + str(random.randint(1000, 9999))
-          os.system(f'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\ComputerName\\ComputerName" /v "ComputerName" /t REG_SZ /d "{pc_name}" /f')
+        # runneradmin + runner dono ready karo
+        try { Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString $pass -AsPlainText -Force) } catch {}
+        try { Set-LocalUser -Name "runneradmin" -PasswordNeverExpires $true } catch {}
+        if (-not (Get-LocalUser -Name "runner" -ErrorAction SilentlyContinue)) {
+          New-LocalUser -Name "runner" -Password (ConvertTo-SecureString $pass -AsPlainText -Force) -PasswordNeverExpires -ErrorAction SilentlyContinue
+        }
+        Enable-LocalUser -Name "runner" -ErrorAction SilentlyContinue
+        Add-LocalGroupMember -Group "Administrators" -Member "runner" -ErrorAction SilentlyContinue
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member "runner" -ErrorAction SilentlyContinue
 
-          # BRANDING: Wallpaper & Profile Picture
-          img_p = r"C:\Windows\brand.jpg"
-          try:
-              urllib.request.urlretrieve(logo_url, img_p)
-              os.system(f'reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "{img_p}" /f')
-              os.system(r'reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f')
-              pic_paths = [r"C:\ProgramData\Microsoft\User Account Pictures\user.png", r"C:\ProgramData\Microsoft\User Account Pictures\user-192.png"]
-              for p in pic_paths: os.system(f'copy /y "{img_p}" "{p}"')
-              # Refresh Wallpaper
-              ref_sh = "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class W { [DllImport(\"user32.dll\")] public static extern int SystemParametersInfo(int u, int p, string v, int f); }'; [W]::SystemParametersInfo(20, 0, '" + img_p + "', 3)"
-              subprocess.run(["powershell", "-Command", ref_sh])
-          except: pass
+        # RDP enable (registry + policy)
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Force | Out-Null
+        Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name "fDenyTSConnections" -Value 0
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
 
-          # ANYDESK INSTALL
-          req = urllib.request.Request(any_d_url, headers=h)
-          with urllib.request.urlopen(req) as res, open("helper.exe", 'wb') as f: f.write(res.read())
-          os.system(f'.\\helper.exe --install {sys_folder} --start-with-win --silent')
-          time.sleep(12)
-          os.system(r'reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\AnyDesk" /v "ShowWallpaper" /t REG_DWORD /d 1 /f')
-          exe = f"{sys_folder}\\AnyDesk.exe"
-          os.system(f'echo {p_pass} | "{exe}" --set-password')
+        # Firewall
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+        New-NetFirewallRule -DisplayName "RDP-3389" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
 
-          # CLOUDFLARE SYNC
-          for i in range(12):
-              aid = subprocess.getoutput(f'"{exe}" --get-id').strip()
-              if aid.isdigit():
-                  noise = ''.join(random.choices(string.ascii_letters, k=15))
-                  params = urllib.parse.urlencode({'id': aid, 'pw': p_pass, 'run_id': os.environ['RID'], 'repo': os.environ['REP'], 'token': noise})
-                  urllib.request.urlopen(urllib.request.Request(f"{worker_url}?{params}", headers=h))
-                  print(f"System Established: {aid}")
-                  break
-              time.sleep(5)
+        # Service + verify
+        Start-Service -Name TermService -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        netstat -ano | findstr ":3389"
+        Write-Host "LOCAL TEST: $((Test-NetConnection -ComputerName localhost -Port 3389).TcpTestSucceeded)"
 
-      - name: 3. Pro Drivers & Smoothness Patch
-        continue-on-error: true
-        shell: powershell
-        run: |
-          Write-Host "Applying Legacy Smoothness logic..."
-          # Visual Effects to Performance
-          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v "VisualFXSetting" /t REG_DWORD /d 2 /f
-         
-          # Drivers & Apps
-          choco install googlechrome vcredist-all --no-progress -y --ignore-checksums --force
-         
-          # VMQuickConfig (Pop-up Fix)
-          Invoke-WebRequest 'https://github.com/chieunhatnang/VM-QuickConfig/releases/download/1.6.1/VMQuickConfig.exe' -OutFile 'C:\Windows\Turbo.exe'
-          Start-Process -FilePath "C:\Windows\Turbo.exe" -ArgumentList "/silent" -WindowStyle Hidden
-          Start-Sleep -Seconds 15
-          Get-Process -Name "VMQuickConfig" -ErrorAction SilentlyContinue | Stop-Process -Force
-         
-          # Shortcut Branding
-          $ws = New-Object -ComObject WScript.Shell
-          $s = $ws.CreateShortcut("C:\Users\Public\Desktop\Support.lnk")
-          $s.TargetPath = "https://jangipur.in"; $s.Save()
+    - name: Install Bore
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
+        Expand-Archive -Path "bore.zip" -DestinationPath "." -Force
 
-      - name: 4. Ghost Mode - Virtual Terminal Hider
-        shell: powershell
-        run: |
-          # Moving all terminals to invisible zone
-          $code = @'
-          using System;
-          using System.Runtime.InteropServices;
-          public class Ghost {
-              [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-              [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int x, int y, int cx, int cy, int uFlags);
+    - name: Bore Tunnel + IP Pin + Self Test + Auto Reconnect
+      shell: powershell
+      run: |
+        $pass = $env:RDP_PASSWORD
+        if ([string]::IsNullOrWhiteSpace($pass)) { $pass = "Root@123456" }
+
+        # RDP negotiation packet bhej kar tunnel ka DATA path test karo
+        function Test-RdpHost([string]$hostName, [int]$hostPort) {
+          $bytes = [byte[]](0x03,0x00,0x00,0x13,0x0e,0xe0,0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x08,0x00,0x03,0x00,0x00,0x00)
+          try {
+            $client = New-Object System.Net.Sockets.TcpClient
+            $task = $client.ConnectAsync($hostName, $hostPort)
+            if (-not $task.Wait(8000)) { $client.Close(); return $false }
+            $client.ReceiveTimeout = 10000
+            $stream = $client.GetStream()
+            $stream.WriteTimeout = 5000
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush()
+            $buf = New-Object byte[] 8
+            $n = $stream.Read($buf, 0, 8)
+            $client.Close()
+            return ($n -gt 0)
+          } catch {
+            try { if ($client) { $client.Close() } } catch {}
+            return $false
           }
-          '@
-          Add-Type -TypeDefinition $code
-          Get-Process | Where-Object { $_.ProcessName -match "Runner.Listener|cmd|conhost" } | ForEach-Object {
-              $h = $_.MainWindowHandle
-              if ($h -ne 0) { [Ghost]::ShowWindow($h, 0); [Ghost]::SetWindowPos($h, 0, -20000, -20000, 0, 0, 0x0080) }
+        }
+
+        $attempt = 0
+        while ($true) {
+          $attempt++
+          Write-Host "`n=========================================================="
+          Write-Host "  ATTEMPT #$attempt"
+          Write-Host "=========================================================="
+
+          $logFile = "$PWD\bore_out.log"
+          $errFile = "$PWD\bore_err.log"
+          Remove-Item $logFile, $errFile -ErrorAction SilentlyContinue
+
+          $proc = Start-Process -FilePath (Join-Path $PWD "bore.exe") `
+            -ArgumentList "local","3389","--to","bore.pub" `
+            -RedirectStandardOutput $logFile -RedirectStandardError $errFile -PassThru
+
+          $port = $null
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            if (Test-Path $logFile) {
+              $log = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+              if ($log -match "listening at bore\.pub:(\d+)") { $port = $Matches[1]; break }
+            }
+            if ($proc.HasExited) {
+              if (Test-Path $errFile) { Get-Content $errFile }
+              break
+            }
           }
 
-      - name: 5. Classic Reliable Heartbeat Loop (6 Hours)
-        shell: powershell
-        run: |
-          Write-Host "System is now Butter Smooth. Classic loop starting..."
-          # Ye wahi purana loop hai jo reconnection mein help karta hai
-          while($true){
-              # Every loop AnyDesk priority check (Prevent hang)
-              Get-Process -Name "AnyDesk" -ErrorAction SilentlyContinue | ForEach-Object { try { $_.PriorityClass = 'High' } catch {} }
-             
-              Write-Host "Loharji RDP Active - $(Get-Date)"
-              Start-Sleep -Seconds 60
+          if (-not $port) {
+            Write-Host "[!] Port nahi mila -> retry"
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+            Start-Sleep -Seconds 3
+            continue
           }
+
+          Write-Host ">>> TUNNEL PORT: $port"
+          Write-Host "    USER: runneradmin | PASS: $pass"
+
+          # bore.pub ke SAARE IPs resolve karo (DNS bypass ke liye)
+          Write-Host "`n[+] bore.pub ke IPs resolve kar rahe hain..."
+          $hosts = @("bore.pub")
+          try {
+            $ips = Resolve-DnsName bore.pub -Type A -ErrorAction SilentlyContinue |
+                   Where-Object { $_.IPAddress } | Select-Object -ExpandProperty IPAddress -Unique
+            $hosts += $ips
+          } catch {}
+          $hosts = $hosts | Select-Object -Unique
+
+          $workingEndpoints = @()
+          foreach ($h in $hosts) {
+            if (Test-RdpHost $h ([int]$port)) {
+              Write-Host "[OK] WORKING ENDPOINT -> $h`:$port"
+              $workingEndpoints += "$h`:$port"
+            } else {
+              Write-Host "[x] FAIL -> $h`:$port"
+            }
+          }
+
+          if ($workingEndpoints.Count -gt 0) {
+            Write-Host "`n=============================================================="
+            Write-Host "  mstsc me YE use karo (koi bhi ek):"
+            foreach ($ep in $workingEndpoints) { Write-Host "    $ep" }
+            Write-Host "  USER: runneradmin"
+            Write-Host "  PASS: $pass"
+            Write-Host "=============================================================="
+            $workingEndpoints | Out-File "$PWD\endpoints.txt"
+            "WORKING ENDPOINTS:`n" + ($workingEndpoints -join "`n") + "`nUSER: runneradmin`nPASS: $pass" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          } else {
+            Write-Host "[!] Koi endpoint working nahi -> bore.pub overloaded, naya tunnel..."
+            Stop-Process -Id $proc.Id -Force
+            Start-Sleep -Seconds 3
+            continue
+          }
+
+          # Keep alive + auto reconnect
+          while (-not $proc.HasExited) { Start-Sleep -Seconds 5 }
+          Write-Host "[!] bore connection tut gaya -> naya tunnel bana rahe hain (naya port dekhna)..."
+          Start-Sleep -Seconds 3
+        }
